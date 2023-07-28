@@ -1,35 +1,164 @@
-import { Message } from '@/types'
-import { OpenAIStream } from '@/utils'
+import { SQL_PREFIX, SQL_SUFFIX } from '../../utils/prompt'
+import { Configuration, OpenAIApi, ChatCompletionRequestMessage } from 'openai'
+import { OpenAI } from 'langchain'
+import { SqlToolkit, createSqlAgent } from 'langchain/agents'
+import { SqlDatabase } from 'langchain/sql_db'
+import type { NextApiRequest, NextApiResponse } from 'next'
+import { DataSource } from 'typeorm'
 
-export const config = {
-  runtime: 'edge',
+const configuration = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY,
+})
+
+interface ChatResponse {
+  prompt: string
+  sqlQuery: string
+  result: Record<string, string | boolean | number>[]
+  error: string
+}
+const openai = new OpenAIApi(configuration)
+
+export async function executorSQL(
+  sqlQuery: string,
+  sqlResult: string
+): Promise<string> {
+  // Parse the JSON data
+  const data = JSON.parse(sqlResult)
+
+  // Convert the data into a text representation
+  let dataText = 'Data Information:\n\n'
+  Object.keys(data).forEach((key) => {
+    dataText += `- ${key}: ${data[key]}\n`
+  })
+
+  return dataText
 }
 
-const handler = async (req: Request): Promise<Response> => {
+const functionMap: { [key: string]: Function } = {
+  executorSQL: executorSQL,
+}
+
+const generateFunctionsArray = () => {
+  return Object.keys(functionMap).map((funcName) => {
+    const func = functionMap[funcName]
+
+    return {
+      name: funcName,
+      description: `Description of ${funcName}`,
+      parameters: {
+        type: 'object',
+        properties: {
+          sqlQuery: {
+            type: 'string',
+          },
+          sqlResult: {
+            type: 'string',
+          },
+        },
+        required: ['sqlQuery', 'sqlResult'],
+      },
+    }
+  })
+}
+
+interface ChatResponse {
+  prompt: string
+  sqlQuery: string
+  result: Record<string, string | boolean | number>[]
+  error: string
+}
+
+export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
+  const datasource = new DataSource({
+    type: 'sqlite',
+    database: './data/northwind.db',
+  })
+
+  const db = await SqlDatabase.fromDataSourceParams({
+    appDataSource: datasource,
+  })
+
+  const toolkit = new SqlToolkit(db)
+  const model = new OpenAI({
+    openAIApiKey: process.env.OPENAI_API_KEY,
+    temperature: 0,
+  })
+  const executor = createSqlAgent(model, toolkit, {
+    topK: 10,
+    prefix: SQL_PREFIX,
+    suffix: SQL_SUFFIX,
+  })
+  const { query: prompt } = req.body
+
+  let response = {
+    prompt: prompt,
+    sqlQuery: '',
+    result: [],
+    error: '',
+  }
+
+  let response1: ChatResponse = {
+    prompt: prompt,
+    sqlQuery: '',
+    result: [],
+    error: '',
+  }
+
+  const result = await executor.call({ input: prompt })
+  // console.log('Ini result: ', result)
+
+  let messages: ChatCompletionRequestMessage[] = [
+    {
+      role: 'user',
+      content: SQL_PREFIX,
+    },
+  ]
+  // console.log('Ini message user: ', messages)
+
+  result.intermediateSteps.forEach((step: any) => {
+    if (step.action.tool === 'query-sql') {
+      response.sqlQuery = step.action.toolInput
+      response.result = JSON.parse(step.observation)
+
+      messages.push({
+        role: 'assistant',
+        content: response.sqlQuery,
+        function_call: {
+          name: 'executorSQL',
+          arguments: JSON.stringify({
+            sqlQuery: response.sqlQuery,
+            sqlResult: JSON.stringify(response.result),
+          }),
+        },
+      })
+    }
+  })
+
   try {
-    const { messages } = (await req.json()) as {
-      messages: Message[]
+    // console.log('Ini message:', messages)
+
+    const translationResponse = await openai.createChatCompletion({
+      model: 'gpt-3.5-turbo-16k-0613',
+      messages: messages,
+      functions: generateFunctionsArray(),
+      function_call: 'auto',
+      temperature: 0.25,
+    })
+
+    const responseMessage = translationResponse.data.choices[0]?.message
+    const formattedContent = responseMessage?.content?.replace(/\n/g, '')
+
+    if (responseMessage && formattedContent !== undefined) {
+      responseMessage.content = formattedContent
+      let customOutput = responseMessage
+
+      res.status(200).json({ output: customOutput })
+    } else {
+      res.status(500).json({ error: 'Invalid response from GPT-3' })
     }
-
-    const charLimit = 12000
-    let charCount = 0
-    let messagesToSend = []
-
-    for (let i = 0; i < messages.length; i++) {
-      const message = messages[i]
-      if (charCount + message.content.length > charLimit) {
-        break
-      }
-      charCount += message.content.length
-      messagesToSend.push(message)
-    }
-
-    const stream = await OpenAIStream(messagesToSend)
-
-    return new Response(stream)
   } catch (error) {
-    console.error(error)
-    return new Response('Error', { status: 500 })
+    console.error('Error processing request:', error)
+    res.status(500).json({ error: 'Internal Server Error' })
   }
 }
 
