@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState, FormEvent } from 'react'
 import axios from 'axios'
 import { AiFillGithub, AiOutlineInfoCircle } from 'react-icons/ai'
-
 import Header from '../components/Header'
 
+const API_URL = 'http://localhost:3000/api/chat'
+
 const IndexPage: React.FC = () => {
-  const API_URL = 'http://localhost:3000/api/chat'
   const [inputQuery, setInputQuery] = useState('')
   const [messages, setMessages] = useState<
     Array<{ role: string; content: string }>
@@ -45,6 +45,7 @@ const IndexPage: React.FC = () => {
   return (
     <div className='flex flex-col justify-between h-screen bg-gray-800 p-2 mx-auto max-w-full'>
       <Header className='mt-5 mb-5' />
+
       <button
         onClick={() => {
           window.open(
@@ -82,7 +83,7 @@ const IndexPage: React.FC = () => {
               </div>
               <form
                 onSubmit={handleSubmit}
-                className='mt-5 mb-5 relative bg-gray-700 rounded-lg'
+                className='mt-5 mb-5 relative bg-gray-700 rounded-lg flex items-center'
               >
                 <input
                   type='text'
@@ -92,7 +93,7 @@ const IndexPage: React.FC = () => {
                 />
                 <button
                   type='submit'
-                  className='bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600'
+                  className='ml-4 bg-gray-800 text-white py-2 px-4 rounded-md hover:bg-blue-600'
                 >
                   Submit
                 </button>
