@@ -22,10 +22,8 @@ export async function executorSQL(
   sqlQuery: string,
   sqlResult: string
 ): Promise<string> {
-  // Parse the JSON data
   const data = JSON.parse(sqlResult)
 
-  // Convert the data into a text representation
   let dataText = 'Data Information:\n\n'
   Object.keys(data).forEach((key) => {
     dataText += `- ${key}: ${data[key]}\n`
@@ -70,9 +68,14 @@ interface ChatResponse {
 
 export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   const datasource = new DataSource({
-    type: 'sqlite',
-    database: './data/northwind.db',
+    type: 'mysql',
+    host: 'localhost',
+    port: 3306, 
+    username: 'root',
+    password: '',
+    database: 'sekolahkita'
   })
+
 
   const db = await SqlDatabase.fromDataSourceParams({
     appDataSource: datasource,
@@ -105,7 +108,6 @@ export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   }
 
   const result = await executor.call({ input: prompt })
-  // console.log('Ini result: ', result)
 
   let messages: ChatCompletionRequestMessage[] = [
     {
@@ -113,7 +115,6 @@ export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
       content: SQL_PREFIX,
     },
   ]
-  // console.log('Ini message user: ', messages)
 
   result.intermediateSteps.forEach((step: any) => {
     if (step.action.tool === 'query-sql') {
@@ -135,7 +136,6 @@ export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   })
 
   try {
-    // console.log('Ini message:', messages)
 
     const translationResponse = await openai.createChatCompletion({
       model: 'gpt-3.5-turbo-16k-0613',
