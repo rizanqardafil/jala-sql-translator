@@ -9,7 +9,6 @@ You have access to tools for interacting with the database.
 Only use the below tools. Only use the information returned by the below tools to construct your final answer.
 You MUST double check your query before executing it. If you get an error while executing a query, rewrite a different query and try again.
 DO NOT try to execute the query more than three times.
-DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.
 If the question does not seem related to the database, just return "I don't know" as the answer.
 If you cannot find a way to answer the question, just return the best answer you can find after trying at least three times.`
 
