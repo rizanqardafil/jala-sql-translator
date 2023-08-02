@@ -10,23 +10,19 @@ const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-interface ChatResponse {
-  prompt: string
-  sqlQuery: string
-  result: Record<string, string | boolean | number>[]
-  error: string
-}
 const openai = new OpenAIApi(configuration)
 
 export async function executorSQL(
   sqlQuery: string,
   sqlResult: string
 ): Promise<string> {
+  // Parse the JSON data
   const data = JSON.parse(sqlResult)
 
+  // Convert the data into a text representation
   let dataText = 'Data Information:\n\n'
   Object.keys(data).forEach((key) => {
-    dataText += `- ${key}: ${data[key]}\n`
+    dataText += `${key}: ${data[key]}`
   })
 
   return dataText
@@ -59,23 +55,11 @@ const generateFunctionsArray = () => {
   })
 }
 
-interface ChatResponse {
-  prompt: string
-  sqlQuery: string
-  result: Record<string, string | boolean | number>[]
-  error: string
-}
-
 export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   const datasource = new DataSource({
-    type: 'mysql',
-    host: 'localhost',
-    port: 3306, 
-    username: 'root',
-    password: '',
-    database: 'sekolahkita'
+    type: 'sqlite',
+    database: './data/northwind.db',
   })
-
 
   const db = await SqlDatabase.fromDataSourceParams({
     appDataSource: datasource,
@@ -100,21 +84,21 @@ export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     error: '',
   }
 
-  let response1: ChatResponse = {
-    prompt: prompt,
-    sqlQuery: '',
-    result: [],
-    error: '',
-  }
-
   const result = await executor.call({ input: prompt })
 
   let messages: ChatCompletionRequestMessage[] = [
     {
-      role: 'user',
+      role: 'system',
       content: SQL_PREFIX,
     },
   ]
+
+  let message: ChatCompletionRequestMessage = {
+    role: 'user',
+    content: prompt,
+  }
+
+  messages.push(message)
 
   result.intermediateSteps.forEach((step: any) => {
     if (step.action.tool === 'query-sql') {
@@ -136,29 +120,89 @@ export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   })
 
   try {
-
-    const translationResponse = await openai.createChatCompletion({
+    let sqlresult: any = await openai.createChatCompletion({
       model: 'gpt-3.5-turbo-16k-0613',
       messages: messages,
+      temperature: 0.25,
       functions: generateFunctionsArray(),
       function_call: 'auto',
-      temperature: 0.25,
     })
 
-    const responseMessage = translationResponse.data.choices[0]?.message
-    const formattedContent = responseMessage?.content?.replace(/\n/g, '')
+    while (sqlresult.data.choices[0]?.finish_reason === null) {
+      const message: ChatCompletionRequestMessage = {
+        role: 'user',
+        content: sqlresult.data.choices[0]?.message?.content,
+      }
+      messages.push(message)
 
-    if (responseMessage && formattedContent !== undefined) {
-      responseMessage.content = formattedContent
-      let customOutput = responseMessage
+      if (sqlresult.data.choices[0]?.finish_reason === 'function_call') {
+        try {
+          const funcName =
+            sqlresult.data.choices[0]?.message?.function_call?.name
+          if (funcName) {
+            const func = functionMap[funcName]
+            const params = func({
+              ...JSON.parse(
+                sqlresult.data.choices[0]?.message?.function_call?.arguments ??
+                  '{}'
+              ),
+            })
+            const function_response = await func(params)
+            const functionMessage: ChatCompletionRequestMessage = {
+              role: 'function',
+              name: funcName,
+              content: function_response,
+            }
+            messages.push(functionMessage)
+          }
+        } catch (e) {
+          const error = e as Error
+          const functionMessage: ChatCompletionRequestMessage = {
+            role: 'function',
+            name: sqlresult.data.choices[0]?.message?.function_call?.name,
+            content: JSON.stringify({
+              status_code: 422,
+              reason: error.name,
+              content: error.message,
+            }),
+          }
+          messages.push(functionMessage)
+        }
 
-      res.status(200).json({ output: customOutput })
-    } else {
-      res.status(500).json({ error: 'Invalid response from GPT-3' })
+        sqlresult = await openai.createChatCompletion({
+          model: 'gpt-3.5-turbo-16k-0613',
+          messages: messages,
+          temperature: 0.25,
+          functions: generateFunctionsArray(),
+          function_call: 'auto',
+        })
+      } else {
+        break
+      }
     }
+
+    const finalresponse = await openai.createChatCompletion({
+      model: 'gpt-3.5-turbo-16k-0613',
+      messages: messages,
+      temperature: 0.8,
+      functions: generateFunctionsArray(),
+      function_call: 'auto',
+    })
+
+    const responseMessage = finalresponse.data.choices[0]?.message
+    if (responseMessage) {
+      const formattedContent = responseMessage?.content?.replace(/\n/g, '')
+      responseMessage.content = formattedContent
+    }
+
+    const customOutput = responseMessage || {}
+
+    res.status(200).json({ output: customOutput })
   } catch (error) {
-    console.error('Error processing request:', error)
-    res.status(500).json({ error: 'Internal Server Error' })
+    console.error('Error calling OpenAI API:', error)
+    res
+      .status(500)
+      .json({ error: 'An error occurred while processing the request.' })
   }
 }
 
