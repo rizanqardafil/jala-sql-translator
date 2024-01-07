@@ -16,10 +16,9 @@ export async function executorSQL(
   sqlQuery: string,
   sqlResult: string
 ): Promise<string> {
-  // Parse the JSON data
+
   const data = JSON.parse(sqlResult)
 
-  // Convert the data into a text representation
   let dataText = 'Data Information:\n\n'
   Object.keys(data).forEach((key) => {
     dataText += `${key}: ${data[key]}`
@@ -104,6 +103,7 @@ export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     if (step.action.tool === 'query-sql') {
       response.sqlQuery = step.action.toolInput
       response.result = JSON.parse(step.observation)
+      console.log(response.sqlQuery)
 
       messages.push({
         role: 'assistant',
@@ -127,6 +127,7 @@ export const handler = async (req: NextApiRequest, res: NextApiResponse) => {
       functions: generateFunctionsArray(),
       function_call: 'auto',
     })
+    
 
     while (sqlresult.data.choices[0]?.finish_reason === null) {
       const message: ChatCompletionRequestMessage = {
